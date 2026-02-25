@@ -102,9 +102,7 @@
 
       <div class="row">
         <div class="card">
-          <label for="playerId">Player ID</label>
-          <input id="playerId" placeholder="e.g. alice" />
-          <div class="small">Used for move authorization and turn checks.</div>
+          <div class="small">Your player identity is generated automatically.</div>
         </div>
       </div>
 
@@ -142,7 +140,7 @@
 
       <div class="card">
         <div id="status" class="status">
-          Enter IDs and load or create a game.
+          Create or join a game.
         </div>
         <div id="error" class="status error"></div>
         <div id="board" class="board"></div>
@@ -150,7 +148,6 @@
     </div>
 
     <script>
-      const playerIdInput = document.getElementById("playerId");
       const newMarkSelect = document.getElementById("newMark");
       const gameIdInput = document.getElementById("gameId");
       const createGameBtn = document.getElementById("createGameBtn");
@@ -166,6 +163,14 @@
       let game = null;
       let isQueuePolling = false;
 
+      function getOrCreatePlayerId() {
+        const existing = sessionStorage.getItem(PLAYER_ID_STORAGE_KEY);
+        if (existing) return existing;
+        const newId = crypto.randomUUID();
+        sessionStorage.setItem(PLAYER_ID_STORAGE_KEY, newId);
+        return newId;
+      }
+
       function setError(message) {
         errorEl.textContent = message || "";
       }
@@ -176,7 +181,7 @@
 
       function determineMyMark() {
         if (!game) return null;
-        const playerId = playerIdInput.value.trim();
+        const playerId = getOrCreatePlayerId();
         if (playerId === game.players.X) return "X";
         if (playerId === game.players.O) return "O";
         return null;
@@ -197,8 +202,6 @@
 
       function buildInviteLink() {
         if (!game) return "";
-        const myPlayerId = playerIdInput.value.trim();
-        if (!myPlayerId) return "";
 
         const params = new URLSearchParams();
         params.set("gameId", game.id);
@@ -245,7 +248,7 @@
           if (myMark) {
             setStatus("Waiting for another player to join.");
           } else {
-            setStatus("Open game. Enter your player ID and click Load Game to join.");
+            setStatus("Open game. Click Load Game to join.");
           }
           return;
         }
@@ -264,8 +267,7 @@
 
       async function joinGameIfNeeded() {
         if (!game) return;
-        const playerId = playerIdInput.value.trim();
-        if (!playerId) return;
+        const playerId = getOrCreatePlayerId();
 
         const isAlreadyPlayer =
           game.players.X === playerId || game.players.O === playerId;
@@ -310,11 +312,7 @@
 
       async function submitMove(x, y) {
         setError("");
-        const playerId = playerIdInput.value.trim();
-        if (!playerId) {
-          setError("Player ID is required.");
-          return;
-        }
+        const playerId = getOrCreatePlayerId();
 
         if (!game) {
           setError("Load a game first.");
@@ -339,13 +337,8 @@
 
       async function createGame() {
         setError("");
-        const playerId = playerIdInput.value.trim();
+        const playerId = getOrCreatePlayerId();
         const myMark = newMarkSelect.value;
-
-        if (!playerId) {
-          setError("Player ID is required.");
-          return;
-        }
 
         const response = await fetch("/games", {
           method: "POST",
@@ -360,7 +353,6 @@
         game = data;
         isQueuePolling = false;
         gameIdInput.value = data.id;
-        sessionStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
         syncUrlState();
         updateInviteLink();
         renderBoard();
@@ -368,11 +360,7 @@
 
       async function joinQueue() {
         setError("");
-        const playerId = playerIdInput.value.trim();
-        if (!playerId) {
-          setError("Player ID is required.");
-          return;
-        }
+        const playerId = getOrCreatePlayerId();
 
         const response = await fetch("/queue/join", {
           method: "POST",
@@ -407,11 +395,7 @@
       }
 
       async function pollQueueStatus() {
-        const playerId = playerIdInput.value.trim();
-        if (!playerId) {
-          isQueuePolling = false;
-          return;
-        }
+        const playerId = getOrCreatePlayerId();
 
         const response = await fetch(
           "/queue/" + encodeURIComponent(playerId) + "/status",
@@ -501,42 +485,18 @@
         }
       });
 
-      playerIdInput.addEventListener("change", () => {
-        const playerId = playerIdInput.value.trim();
-        if (playerId) {
-          sessionStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
-        }
-        syncUrlState();
-        updateInviteLink();
-        renderBoard();
-      });
-
       gameIdInput.addEventListener("change", () => {
         syncUrlState();
       });
 
       (async function initFromQueryParams() {
-        const storedPlayerId = sessionStorage.getItem(PLAYER_ID_STORAGE_KEY);
-        if (!playerIdInput.value.trim() && storedPlayerId) {
-          playerIdInput.value = storedPlayerId;
-        }
+        getOrCreatePlayerId();
 
         const params = new URLSearchParams(window.location.search);
         const queryGameId = params.get("gameId");
 
         if (queryGameId) {
           gameIdInput.value = queryGameId;
-          if (!playerIdInput.value.trim()) {
-            const enteredPlayerId = window.prompt(
-              "Enter your player ID to join this game:",
-            );
-            if (!enteredPlayerId || !enteredPlayerId.trim()) {
-              setStatus("Enter your player ID, then click Load Game.");
-              setError("Player ID is required to join from a share link.");
-              return;
-            }
-            playerIdInput.value = enteredPlayerId.trim();
-          }
           try {
             await fetchGame({ attemptJoin: true });
             setError("");
@@ -546,7 +506,7 @@
           return;
         }
 
-        const playerId = playerIdInput.value.trim();
+        const playerId = getOrCreatePlayerId();
         if (playerId) {
           try {
             const response = await fetch(
