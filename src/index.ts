@@ -25,6 +25,9 @@ type GameState = {
 };
 
 const activeGames = new Map<string, GameState>();
+const playerQueue: string[] = [];
+const queuedPlayers = new Set<string>();
+const playerMatches = new Map<string, string>();
 const uiHtmlPromise = readFile(new URL("./ui/index.html", import.meta.url), "utf8");
 
 function createEmptyBoard(): Board {
@@ -90,6 +93,41 @@ function calculateWinner(board: Board): Mark | null {
   return null;
 }
 
+function createGameWithPlayers(playerXId: string | null, playerOId: string | null): GameState {
+  const game: GameState = {
+    id: generateGameId(),
+    board: createEmptyBoard(),
+    players: {
+      X: playerXId,
+      O: playerOId,
+    },
+    currentTurn: "X",
+    winner: null,
+    moveCount: 0,
+  };
+
+  activeGames.set(game.id, game);
+  return game;
+}
+
+function matchQueuedPlayers(): void {
+  while (playerQueue.length >= 2) {
+    const playerXId = playerQueue.shift();
+    const playerOId = playerQueue.shift();
+
+    if (!playerXId || !playerOId) {
+      return;
+    }
+
+    queuedPlayers.delete(playerXId);
+    queuedPlayers.delete(playerOId);
+
+    const game = createGameWithPlayers(playerXId, playerOId);
+    playerMatches.set(playerXId, game.id);
+    playerMatches.set(playerOId, game.id);
+  }
+}
+
 app.get("/", async (c) => {
   try {
     const uiHtml = await uiHtmlPromise;
@@ -114,20 +152,74 @@ app.post("/games", async (c) => {
 
   const chosenMark: Mark = mark === "O" ? "O" : "X";
 
-  const game: GameState = {
-    id: generateGameId(),
-    board: createEmptyBoard(),
-    players: {
-      X: chosenMark === "X" ? playerId : null,
-      O: chosenMark === "O" ? playerId : null,
-    },
-    currentTurn: "X",
-    winner: null,
-    moveCount: 0,
-  };
-
-  activeGames.set(game.id, game);
+  const game = createGameWithPlayers(
+    chosenMark === "X" ? playerId : null,
+    chosenMark === "O" ? playerId : null,
+  );
   return c.json(game, 201);
+});
+
+app.post("/queue/join", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const playerId = body?.playerId;
+
+  if (typeof playerId !== "string" || playerId.trim() === "") {
+    return c.json({ error: "playerId is required." }, 400);
+  }
+
+  const matchedGameId = playerMatches.get(playerId);
+  if (matchedGameId) {
+    const matchedGame = activeGames.get(matchedGameId);
+    if (matchedGame) {
+      playerMatches.delete(playerId);
+      return c.json({ status: "matched", game: matchedGame });
+    }
+    playerMatches.delete(playerId);
+  }
+
+  if (!queuedPlayers.has(playerId)) {
+    playerQueue.push(playerId);
+    queuedPlayers.add(playerId);
+  }
+
+  matchQueuedPlayers();
+
+  const newMatchedGameId = playerMatches.get(playerId);
+  if (newMatchedGameId) {
+    const matchedGame = activeGames.get(newMatchedGameId);
+    if (matchedGame) {
+      playerMatches.delete(playerId);
+      return c.json({ status: "matched", game: matchedGame });
+    }
+    playerMatches.delete(playerId);
+  }
+
+  const position = playerQueue.indexOf(playerId) + 1;
+  return c.json({ status: "waiting", position });
+});
+
+app.get("/queue/:playerId/status", (c) => {
+  const playerId = c.req.param("playerId");
+  if (!playerId) {
+    return c.json({ error: "playerId is required." }, 400);
+  }
+
+  const matchedGameId = playerMatches.get(playerId);
+  if (matchedGameId) {
+    const matchedGame = activeGames.get(matchedGameId);
+    if (matchedGame) {
+      playerMatches.delete(playerId);
+      return c.json({ status: "matched", game: matchedGame });
+    }
+    playerMatches.delete(playerId);
+  }
+
+  if (queuedPlayers.has(playerId)) {
+    const position = playerQueue.indexOf(playerId) + 1;
+    return c.json({ status: "waiting", position });
+  }
+
+  return c.json({ status: "idle" });
 });
 
 app.get("/games/:gameId", (c) => {

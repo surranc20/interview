@@ -118,6 +118,9 @@
           <button id="createGameBtn" style="margin-top: 10px">
             Create New Game
           </button>
+          <button id="joinQueueBtn" style="margin-top: 10px">
+            Join Matchmaking Queue
+          </button>
         </div>
 
         <div class="card">
@@ -151,6 +154,7 @@
       const newMarkSelect = document.getElementById("newMark");
       const gameIdInput = document.getElementById("gameId");
       const createGameBtn = document.getElementById("createGameBtn");
+      const joinQueueBtn = document.getElementById("joinQueueBtn");
       const loadGameBtn = document.getElementById("loadGameBtn");
       const inviteLinkInput = document.getElementById("inviteLink");
       const copyInviteBtn = document.getElementById("copyInviteBtn");
@@ -159,6 +163,7 @@
       const boardEl = document.getElementById("board");
 
       let game = null;
+      let isQueuePolling = false;
 
       function setError(message) {
         errorEl.textContent = message || "";
@@ -352,10 +357,92 @@
         }
 
         game = data;
+        isQueuePolling = false;
         gameIdInput.value = data.id;
         syncUrlState();
         updateInviteLink();
         renderBoard();
+      }
+
+      async function joinQueue() {
+        setError("");
+        const playerId = playerIdInput.value.trim();
+        if (!playerId) {
+          setError("Player ID is required.");
+          return;
+        }
+
+        const response = await fetch("/queue/join", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerId }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to join queue.");
+        }
+
+        if (data.status === "matched" && data.game) {
+          isQueuePolling = false;
+          game = data.game;
+          gameIdInput.value = data.game.id;
+          syncUrlState();
+          updateInviteLink();
+          renderBoard();
+          setStatus("Match found. Game is ready.");
+          return;
+        }
+
+        isQueuePolling = true;
+        game = null;
+        gameIdInput.value = "";
+        syncUrlState();
+        updateInviteLink();
+        boardEl.innerHTML = "";
+        const positionText =
+          typeof data.position === "number" ? " Position: " + data.position + "." : "";
+        setStatus("In queue. Waiting for partner." + positionText);
+      }
+
+      async function pollQueueStatus() {
+        const playerId = playerIdInput.value.trim();
+        if (!playerId) {
+          isQueuePolling = false;
+          return;
+        }
+
+        const response = await fetch(
+          "/queue/" + encodeURIComponent(playerId) + "/status",
+        );
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to poll queue.");
+        }
+
+        if (data.status === "matched" && data.game) {
+          isQueuePolling = false;
+          game = data.game;
+          gameIdInput.value = data.game.id;
+          syncUrlState();
+          updateInviteLink();
+          renderBoard();
+          setStatus("Match found. Game is ready.");
+          return;
+        }
+
+        if (data.status === "waiting") {
+          const positionText =
+            typeof data.position === "number"
+              ? " Position: " + data.position + "."
+              : "";
+          setStatus("In queue. Waiting for partner." + positionText);
+          return;
+        }
+
+        if (data.status === "idle") {
+          isQueuePolling = false;
+          setStatus("Not in queue. Click Join Matchmaking Queue to start.");
+        }
       }
 
       async function safeRefresh() {
@@ -377,8 +464,18 @@
         }
       });
 
+      joinQueueBtn.addEventListener("click", async () => {
+        try {
+          await joinQueue();
+          setError("");
+        } catch (err) {
+          setError(err.message || "Failed to join queue.");
+        }
+      });
+
       loadGameBtn.addEventListener("click", async () => {
         try {
+          isQueuePolling = false;
           await fetchGame({ attemptJoin: true });
           setError("");
         } catch (err) {
@@ -438,7 +535,18 @@
         }
       })();
 
-      window.setInterval(safeRefresh, 2000);
+      window.setInterval(async () => {
+        if (isQueuePolling) {
+          try {
+            await pollQueueStatus();
+            setError("");
+          } catch (err) {
+            setError(err.message || "Failed to poll queue.");
+          }
+          return;
+        }
+        await safeRefresh();
+      }, 2000);
     </script>
   </body>
 </html>
