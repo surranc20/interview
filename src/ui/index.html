@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tic Tac Toe</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f4f7fb;
+        color: #0f172a;
+      }
+      .container {
+        max-width: 840px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 {
+        margin-top: 0;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card {
+        background: #ffffff;
+        border: 1px solid #dbe1ea;
+        border-radius: 10px;
+        padding: 14px;
+        flex: 1 1 260px;
+      }
+      label {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #c7d2e1;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      button {
+        background: #1d4ed8;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .board {
+        display: grid;
+        grid-template-columns: repeat(3, 100px);
+        gap: 8px;
+        justify-content: start;
+      }
+      .cell {
+        width: 100px;
+        height: 100px;
+        border: 1px solid #9fb0c9;
+        background: #fff;
+        color: #0f172a;
+        font-size: 34px;
+        font-weight: 700;
+      }
+      .status {
+        margin: 10px 0;
+        font-size: 15px;
+      }
+      .error {
+        color: #b91c1c;
+      }
+      .small {
+        font-size: 13px;
+        color: #475569;
+      }
+      .inline-row {
+        display: flex;
+        gap: 8px;
+      }
+      .inline-row button {
+        width: auto;
+        min-width: 110px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Tic Tac Toe API UI</h1>
+
+      <div class="row">
+        <div class="card">
+          <label for="playerId">Player ID</label>
+          <input id="playerId" placeholder="e.g. alice" />
+          <div class="small">Used for move authorization and turn checks.</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="card">
+          <label for="newOpponentId">Opponent ID</label>
+          <input id="newOpponentId" placeholder="e.g. bob" />
+          <label for="newMark" style="margin-top: 10px">Your Mark</label>
+          <select id="newMark">
+            <option value="X">X (goes first)</option>
+            <option value="O">O</option>
+          </select>
+          <button id="createGameBtn" style="margin-top: 10px">
+            Create New Game
+          </button>
+        </div>
+
+        <div class="card">
+          <label for="gameId">Game ID</label>
+          <input id="gameId" placeholder="Paste game id to join/view" />
+          <div class="row" style="margin-top: 10px; margin-bottom: 0">
+            <button id="loadGameBtn">Load Game</button>
+          </div>
+          <div class="small" style="margin-top: 8px">
+            Share this game id with your opponent.
+          </div>
+          <label for="inviteLink" style="margin-top: 10px">Invite Link</label>
+          <div class="inline-row">
+            <input id="inviteLink" readonly placeholder="Create a game first" />
+            <button id="copyInviteBtn" type="button">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="status" class="status">
+          Enter IDs and load or create a game.
+        </div>
+        <div id="error" class="status error"></div>
+        <div id="board" class="board"></div>
+      </div>
+    </div>
+
+    <script>
+      const playerIdInput = document.getElementById("playerId");
+      const newOpponentIdInput = document.getElementById("newOpponentId");
+      const newMarkSelect = document.getElementById("newMark");
+      const gameIdInput = document.getElementById("gameId");
+      const createGameBtn = document.getElementById("createGameBtn");
+      const loadGameBtn = document.getElementById("loadGameBtn");
+      const inviteLinkInput = document.getElementById("inviteLink");
+      const copyInviteBtn = document.getElementById("copyInviteBtn");
+      const statusEl = document.getElementById("status");
+      const errorEl = document.getElementById("error");
+      const boardEl = document.getElementById("board");
+
+      let game = null;
+
+      function setError(message) {
+        errorEl.textContent = message || "";
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function determineMyMark() {
+        if (!game) return null;
+        const playerId = playerIdInput.value.trim();
+        if (playerId === game.players.X) return "X";
+        if (playerId === game.players.O) return "O";
+        return null;
+      }
+
+      function syncUrlState() {
+        const params = new URLSearchParams(window.location.search);
+        const playerId = playerIdInput.value.trim();
+        const gameId = gameIdInput.value.trim();
+        if (playerId) {
+          params.set("playerId", playerId);
+        } else {
+          params.delete("playerId");
+        }
+        if (gameId) {
+          params.set("gameId", gameId);
+        } else {
+          params.delete("gameId");
+        }
+        const query = params.toString();
+        const nextUrl = query ? "/?" + query : "/";
+        window.history.replaceState({}, "", nextUrl);
+      }
+
+      function buildInviteLink() {
+        if (!game) return "";
+        const myPlayerId = playerIdInput.value.trim();
+        if (!myPlayerId) return "";
+
+        let invitePlayerId = "";
+        if (myPlayerId === game.players.X) invitePlayerId = game.players.O;
+        if (myPlayerId === game.players.O) invitePlayerId = game.players.X;
+        if (!invitePlayerId) return "";
+
+        const params = new URLSearchParams();
+        params.set("gameId", game.id);
+        params.set("playerId", invitePlayerId);
+        return window.location.origin + "/?" + params.toString();
+      }
+
+      function updateInviteLink() {
+        inviteLinkInput.value = buildInviteLink();
+      }
+
+      function renderBoard() {
+        boardEl.innerHTML = "";
+        if (!game) return;
+
+        const myMark = determineMyMark();
+        const isMyTurn =
+          myMark !== null &&
+          game.winner === null &&
+          game.currentTurn === myMark;
+
+        for (let y = 0; y < 3; y += 1) {
+          for (let x = 0; x < 3; x += 1) {
+            const value = game.board[y][x];
+            const button = document.createElement("button");
+            button.className = "cell";
+            button.textContent = value || "";
+            button.disabled = Boolean(value) || !isMyTurn;
+            button.addEventListener("click", () => submitMove(x, y));
+            boardEl.appendChild(button);
+          }
+        }
+
+        if (game.winner === "DRAW") {
+          setStatus("Game ended in a draw.");
+          return;
+        }
+        if (game.winner) {
+          setStatus("Winner: " + game.winner);
+          return;
+        }
+        if (!myMark) {
+          setStatus(
+            "You are viewing this board. Current turn: " + game.currentTurn,
+          );
+          return;
+        }
+        if (isMyTurn) {
+          setStatus("Your turn (" + myMark + "). Click an empty cell.");
+        } else {
+          setStatus("Waiting for opponent. Current turn: " + game.currentTurn);
+        }
+      }
+
+      async function fetchGame() {
+        const gameId = gameIdInput.value.trim();
+        if (!gameId) {
+          setError("Game ID is required.");
+          return;
+        }
+
+        const response = await fetch("/games/" + encodeURIComponent(gameId));
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to load game.");
+        }
+        game = data;
+        syncUrlState();
+        updateInviteLink();
+        renderBoard();
+      }
+
+      async function submitMove(x, y) {
+        setError("");
+        const playerId = playerIdInput.value.trim();
+        if (!playerId) {
+          setError("Player ID is required.");
+          return;
+        }
+
+        if (!game) {
+          setError("Load a game first.");
+          return;
+        }
+
+        const response = await fetch(
+          "/games/" + encodeURIComponent(game.id) + "/moves",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerId, x, y }),
+          },
+        );
+        const data = await response.json();
+        console.log(data);
+        if (!response.ok) {
+          throw new Error(data.error || "Move rejected.");
+        }
+        game = data;
+        renderBoard();
+      }
+
+      async function createGame() {
+        setError("");
+        const playerId = playerIdInput.value.trim();
+        const opponentId = newOpponentIdInput.value.trim();
+        const myMark = newMarkSelect.value;
+
+        if (!playerId || !opponentId) {
+          setError("Player ID and Opponent ID are required.");
+          return;
+        }
+        if (playerId === opponentId) {
+          setError("Player IDs must be different.");
+          return;
+        }
+
+        const payload =
+          myMark === "X"
+            ? { playerXId: playerId, playerOId: opponentId }
+            : { playerXId: opponentId, playerOId: playerId };
+
+        const response = await fetch("/games", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to create game.");
+        }
+
+        game = data;
+        gameIdInput.value = data.id;
+        syncUrlState();
+        updateInviteLink();
+        renderBoard();
+      }
+
+      async function safeRefresh() {
+        if (!gameIdInput.value.trim()) return;
+        try {
+          await fetchGame();
+          setError("");
+        } catch (err) {
+          setError(err.message || "Failed to refresh.");
+        }
+      }
+
+      createGameBtn.addEventListener("click", async () => {
+        try {
+          await createGame();
+          setError("");
+        } catch (err) {
+          setError(err.message || "Failed to create game.");
+        }
+      });
+
+      loadGameBtn.addEventListener("click", async () => {
+        try {
+          await fetchGame();
+          setError("");
+        } catch (err) {
+          setError(err.message || "Failed to load game.");
+        }
+      });
+
+      copyInviteBtn.addEventListener("click", async () => {
+        const link = inviteLinkInput.value;
+        if (!link) {
+          setError("Create and load a game first.");
+          return;
+        }
+
+        try {
+          await navigator.clipboard.writeText(link);
+          setError("");
+          setStatus("Invite link copied.");
+        } catch {
+          setError("Failed to copy invite link.");
+        }
+      });
+
+      playerIdInput.addEventListener("change", () => {
+        syncUrlState();
+        updateInviteLink();
+        renderBoard();
+      });
+
+      gameIdInput.addEventListener("change", () => {
+        syncUrlState();
+      });
+
+      (async function initFromQueryParams() {
+        const params = new URLSearchParams(window.location.search);
+        const queryPlayerId = params.get("playerId");
+        const queryGameId = params.get("gameId");
+
+        if (queryPlayerId) {
+          playerIdInput.value = queryPlayerId;
+        }
+        if (queryGameId) {
+          gameIdInput.value = queryGameId;
+          try {
+            await fetchGame();
+            setError("");
+          } catch (err) {
+            setError(err.message || "Failed to load game from URL.");
+          }
+        }
+      })();
+
+      window.setInterval(safeRefresh, 2000);
+    </script>
+  </body>
+</html>
