@@ -16,8 +16,8 @@ type GameState = {
   id: string;
   board: Board;
   players: {
-    X: string;
-    O: string;
+    X: string | null;
+    O: string | null;
   };
   currentTurn: Mark;
   winner: Mark | "DRAW" | null;
@@ -101,26 +101,25 @@ app.get("/", async (c) => {
 
 app.post("/games", async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const playerXId = body?.playerXId;
-  const playerOId = body?.playerOId;
+  const playerId = body?.playerId;
+  const mark = body?.mark;
 
-  if (typeof playerXId !== "string" || typeof playerOId !== "string") {
-    return c.json(
-      { error: "playerXId and playerOId are required strings." },
-      400,
-    );
+  if (typeof playerId !== "string" || playerId.trim() === "") {
+    return c.json({ error: "playerId is required." }, 400);
   }
 
-  if (playerXId === playerOId) {
-    return c.json({ error: "Players must be different." }, 400);
+  if (mark !== undefined && mark !== "X" && mark !== "O") {
+    return c.json({ error: "mark must be X or O when provided." }, 400);
   }
+
+  const chosenMark: Mark = mark === "O" ? "O" : "X";
 
   const game: GameState = {
     id: generateGameId(),
     board: createEmptyBoard(),
     players: {
-      X: playerXId,
-      O: playerOId,
+      X: chosenMark === "X" ? playerId : null,
+      O: chosenMark === "O" ? playerId : null,
     },
     currentTurn: "X",
     winner: null,
@@ -140,6 +139,38 @@ app.get("/games/:gameId", (c) => {
   }
 
   return c.json(game);
+});
+
+app.post("/games/:gameId/join", async (c) => {
+  const gameId = c.req.param("gameId");
+  const game = activeGames.get(gameId);
+
+  if (!game) {
+    return c.json({ error: "Game not found." }, 404);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const playerId = body?.playerId;
+
+  if (typeof playerId !== "string" || playerId.trim() === "") {
+    return c.json({ error: "playerId is required." }, 400);
+  }
+
+  if (game.players.X === playerId || game.players.O === playerId) {
+    return c.json(game);
+  }
+
+  if (game.players.X === null) {
+    game.players.X = playerId;
+    return c.json(game);
+  }
+
+  if (game.players.O === null) {
+    game.players.O = playerId;
+    return c.json(game);
+  }
+
+  return c.json({ error: "Game already has two players." }, 409);
 });
 
 const applyMoveHandler = async (c: Context) => {
@@ -169,6 +200,10 @@ const applyMoveHandler = async (c: Context) => {
 
   if (game.winner) {
     return c.json({ error: "Game is already finished." }, 409);
+  }
+
+  if (!game.players.X || !game.players.O) {
+    return c.json({ error: "Game needs two players before moves can be made." }, 409);
   }
 
   const currentPlayerId = game.players[game.currentTurn];

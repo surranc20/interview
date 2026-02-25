@@ -110,8 +110,6 @@
 
       <div class="row">
         <div class="card">
-          <label for="newOpponentId">Opponent ID</label>
-          <input id="newOpponentId" placeholder="e.g. bob" />
           <label for="newMark" style="margin-top: 10px">Your Mark</label>
           <select id="newMark">
             <option value="X">X (goes first)</option>
@@ -150,7 +148,6 @@
 
     <script>
       const playerIdInput = document.getElementById("playerId");
-      const newOpponentIdInput = document.getElementById("newOpponentId");
       const newMarkSelect = document.getElementById("newMark");
       const gameIdInput = document.getElementById("gameId");
       const createGameBtn = document.getElementById("createGameBtn");
@@ -181,13 +178,7 @@
 
       function syncUrlState() {
         const params = new URLSearchParams(window.location.search);
-        const playerId = playerIdInput.value.trim();
         const gameId = gameIdInput.value.trim();
-        if (playerId) {
-          params.set("playerId", playerId);
-        } else {
-          params.delete("playerId");
-        }
         if (gameId) {
           params.set("gameId", gameId);
         } else {
@@ -203,14 +194,8 @@
         const myPlayerId = playerIdInput.value.trim();
         if (!myPlayerId) return "";
 
-        let invitePlayerId = "";
-        if (myPlayerId === game.players.X) invitePlayerId = game.players.O;
-        if (myPlayerId === game.players.O) invitePlayerId = game.players.X;
-        if (!invitePlayerId) return "";
-
         const params = new URLSearchParams();
         params.set("gameId", game.id);
-        params.set("playerId", invitePlayerId);
         return window.location.origin + "/?" + params.toString();
       }
 
@@ -223,7 +208,9 @@
         if (!game) return;
 
         const myMark = determineMyMark();
+        const hasTwoPlayers = Boolean(game.players.X && game.players.O);
         const isMyTurn =
+          hasTwoPlayers &&
           myMark !== null &&
           game.winner === null &&
           game.currentTurn === myMark;
@@ -248,6 +235,14 @@
           setStatus("Winner: " + game.winner);
           return;
         }
+        if (!hasTwoPlayers) {
+          if (myMark) {
+            setStatus("Waiting for another player to join.");
+          } else {
+            setStatus("Open game. Enter your player ID and click Load Game to join.");
+          }
+          return;
+        }
         if (!myMark) {
           setStatus(
             "You are viewing this board. Current turn: " + game.currentTurn,
@@ -261,7 +256,32 @@
         }
       }
 
-      async function fetchGame() {
+      async function joinGameIfNeeded() {
+        if (!game) return;
+        const playerId = playerIdInput.value.trim();
+        if (!playerId) return;
+
+        const isAlreadyPlayer =
+          game.players.X === playerId || game.players.O === playerId;
+        const hasOpenSlot = !game.players.X || !game.players.O;
+        if (isAlreadyPlayer || !hasOpenSlot) return;
+
+        const response = await fetch(
+          "/games/" + encodeURIComponent(game.id) + "/join",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ playerId }),
+          },
+        );
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to join game.");
+        }
+        game = data;
+      }
+
+      async function fetchGame(options = { attemptJoin: false }) {
         const gameId = gameIdInput.value.trim();
         if (!gameId) {
           setError("Game ID is required.");
@@ -274,6 +294,9 @@
           throw new Error(data.error || "Failed to load game.");
         }
         game = data;
+        if (options.attemptJoin) {
+          await joinGameIfNeeded();
+        }
         syncUrlState();
         updateInviteLink();
         renderBoard();
@@ -301,7 +324,6 @@
           },
         );
         const data = await response.json();
-        console.log(data);
         if (!response.ok) {
           throw new Error(data.error || "Move rejected.");
         }
@@ -312,27 +334,17 @@
       async function createGame() {
         setError("");
         const playerId = playerIdInput.value.trim();
-        const opponentId = newOpponentIdInput.value.trim();
         const myMark = newMarkSelect.value;
 
-        if (!playerId || !opponentId) {
-          setError("Player ID and Opponent ID are required.");
+        if (!playerId) {
+          setError("Player ID is required.");
           return;
         }
-        if (playerId === opponentId) {
-          setError("Player IDs must be different.");
-          return;
-        }
-
-        const payload =
-          myMark === "X"
-            ? { playerXId: playerId, playerOId: opponentId }
-            : { playerXId: opponentId, playerOId: playerId };
 
         const response = await fetch("/games", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ playerId, mark: myMark }),
         });
         const data = await response.json();
         if (!response.ok) {
@@ -349,7 +361,7 @@
       async function safeRefresh() {
         if (!gameIdInput.value.trim()) return;
         try {
-          await fetchGame();
+          await fetchGame({ attemptJoin: false });
           setError("");
         } catch (err) {
           setError(err.message || "Failed to refresh.");
@@ -367,7 +379,7 @@
 
       loadGameBtn.addEventListener("click", async () => {
         try {
-          await fetchGame();
+          await fetchGame({ attemptJoin: true });
           setError("");
         } catch (err) {
           setError(err.message || "Failed to load game.");
@@ -402,16 +414,23 @@
 
       (async function initFromQueryParams() {
         const params = new URLSearchParams(window.location.search);
-        const queryPlayerId = params.get("playerId");
         const queryGameId = params.get("gameId");
 
-        if (queryPlayerId) {
-          playerIdInput.value = queryPlayerId;
-        }
         if (queryGameId) {
           gameIdInput.value = queryGameId;
+          if (!playerIdInput.value.trim()) {
+            const enteredPlayerId = window.prompt(
+              "Enter your player ID to join this game:",
+            );
+            if (!enteredPlayerId || !enteredPlayerId.trim()) {
+              setStatus("Enter your player ID, then click Load Game.");
+              setError("Player ID is required to join from a share link.");
+              return;
+            }
+            playerIdInput.value = enteredPlayerId.trim();
+          }
           try {
-            await fetchGame();
+            await fetchGame({ attemptJoin: true });
             setError("");
           } catch (err) {
             setError(err.message || "Failed to load game from URL.");
