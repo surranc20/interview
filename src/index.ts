@@ -28,6 +28,7 @@ const activeGames = new Map<string, GameState>();
 const playerQueue: string[] = [];
 const queuedPlayers = new Set<string>();
 const playerMatches = new Map<string, string>();
+const playerCurrentGame = new Map<string, string>();
 const uiHtmlPromise = readFile(new URL("./ui/index.html", import.meta.url), "utf8");
 
 function createEmptyBoard(): Board {
@@ -107,6 +108,12 @@ function createGameWithPlayers(playerXId: string | null, playerOId: string | nul
   };
 
   activeGames.set(game.id, game);
+  if (playerXId) {
+    playerCurrentGame.set(playerXId, game.id);
+  }
+  if (playerOId) {
+    playerCurrentGame.set(playerOId, game.id);
+  }
   return game;
 }
 
@@ -233,6 +240,23 @@ app.get("/games/:gameId", (c) => {
   return c.json(game);
 });
 
+app.get("/players/:playerId/game", (c) => {
+  const playerId = c.req.param("playerId");
+  const gameId = playerCurrentGame.get(playerId);
+
+  if (!gameId) {
+    return c.json({ error: "No active game found for player." }, 404);
+  }
+
+  const game = activeGames.get(gameId);
+  if (!game) {
+    playerCurrentGame.delete(playerId);
+    return c.json({ error: "No active game found for player." }, 404);
+  }
+
+  return c.json(game);
+});
+
 app.post("/games/:gameId/join", async (c) => {
   const gameId = c.req.param("gameId");
   const game = activeGames.get(gameId);
@@ -254,11 +278,13 @@ app.post("/games/:gameId/join", async (c) => {
 
   if (game.players.X === null) {
     game.players.X = playerId;
+    playerCurrentGame.set(playerId, game.id);
     return c.json(game);
   }
 
   if (game.players.O === null) {
     game.players.O = playerId;
+    playerCurrentGame.set(playerId, game.id);
     return c.json(game);
   }
 

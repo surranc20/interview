@@ -161,6 +161,7 @@
       const statusEl = document.getElementById("status");
       const errorEl = document.getElementById("error");
       const boardEl = document.getElementById("board");
+      const PLAYER_ID_STORAGE_KEY = "ttt_player_id";
 
       let game = null;
       let isQueuePolling = false;
@@ -359,6 +360,7 @@
         game = data;
         isQueuePolling = false;
         gameIdInput.value = data.id;
+        sessionStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
         syncUrlState();
         updateInviteLink();
         renderBoard();
@@ -500,6 +502,10 @@
       });
 
       playerIdInput.addEventListener("change", () => {
+        const playerId = playerIdInput.value.trim();
+        if (playerId) {
+          sessionStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
+        }
         syncUrlState();
         updateInviteLink();
         renderBoard();
@@ -510,6 +516,11 @@
       });
 
       (async function initFromQueryParams() {
+        const storedPlayerId = sessionStorage.getItem(PLAYER_ID_STORAGE_KEY);
+        if (!playerIdInput.value.trim() && storedPlayerId) {
+          playerIdInput.value = storedPlayerId;
+        }
+
         const params = new URLSearchParams(window.location.search);
         const queryGameId = params.get("gameId");
 
@@ -531,6 +542,28 @@
             setError("");
           } catch (err) {
             setError(err.message || "Failed to load game from URL.");
+          }
+          return;
+        }
+
+        const playerId = playerIdInput.value.trim();
+        if (playerId) {
+          try {
+            const response = await fetch(
+              "/players/" + encodeURIComponent(playerId) + "/game",
+            );
+            if (response.ok) {
+              const data = await response.json();
+              game = data;
+              gameIdInput.value = data.id;
+              syncUrlState();
+              updateInviteLink();
+              renderBoard();
+              setError("");
+              return;
+            }
+          } catch {
+            // Keep current behavior if auto-load fails.
           }
         }
       })();
